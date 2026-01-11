@@ -1,0 +1,15 @@
+[project]
+name = "evennia-discord-gateway"
+version = "0.1.0"
+description = "Discord-only access gateway for Evennia MUDs via local Telnet connections."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Evennia Discord Gateway Contributors"}]
+dependencies = [
+  "discord.py>=2.3.2",
+  "telnetlib3>=2.0.4",
+]
+
+[project.scripts]
+eddg = "gateway.main:main"
