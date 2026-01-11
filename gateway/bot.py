@@ -196,7 +196,7 @@ class GatewayBot(discord.Client):
 
         # Optional nickname set command template
         # Example: "@icname {name}" or "@rename me={name}"
-        self.nick_cmd_template = os.getenv("NICK_COMMAND_TEMPLATE", "").strip()
+        self.nick_cmd_template = os.getenv("NICK_COMMAND_TEMPLATE", "name self = {name}").strip()
 
     async def on_ready(self):
         if not getattr(self, "_reaper_started", False):
@@ -247,9 +247,16 @@ Notes:
             return
 
         discord_id = str(message.author.id)
-        acct = f"{self.config.account_prefix}{discord_id}"
-        pwd = stable_password(self.gateway_secret, discord_id)
         disp = _display_name(message.author, message)
+        def _account_name_from_discord(disp: str, discord_id: str) -> str:
+            base = _sanitize_ic_name(disp)              # already limited to 30
+            suffix = discord_id[-4:]                    # stable, short, unique-ish
+            name = f"{base}-{suffix}"
+            return name[:30]                            # keep within Evennia-ish limits
+
+        acct = _account_name_from_discord(disp, discord_id)
+        pwd = stable_password(self.gateway_secret, discord_id)
+        
 
         # Persist mapping (1:1)
         self.db.upsert_user(discord_id, acct, pwd, _now_ts(), last_discord_name=disp)
@@ -284,14 +291,19 @@ Notes:
             if login_result.created_account:
                 await self._send_chunks(message, "Created your new game account. Welcome!\n")
 
-                # Optional nickname set
-                if self.config.auto_set_nickname and self.nick_cmd_template:
-                    ic = _sanitize_ic_name(disp)
-                    nick_cmd = self.nick_cmd_template.format(name=ic)
-                    await sess.run_command(nick_cmd)
-
             # Send command
             out = await sess.run_command(content)
+
+            # Set the user's nickname once per session
+            # if (
+            #     self.config.auto_set_nickname
+            #     and self.nick_cmd_template
+            #     and not sess.did_rename
+            # ):
+            #     ic = _sanitize_ic_name(disp)
+            #     nick_cmd = self.nick_cmd_template.format(name=ic)
+            #     await sess.run_command(nick_cmd)
+            #     sess.did_rename = True
 
             # If Evennia echoed nothing, don't spam
             if out.strip():

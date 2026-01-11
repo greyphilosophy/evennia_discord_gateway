@@ -35,6 +35,7 @@ class EvenniaTelnetSession:
         self.writer: Optional[telnetlib3.TelnetWriter] = None
         self._lock = asyncio.Lock()
         self._last_io = time.time()
+        self.did_rename = False
 
     def is_connected(self) -> bool:
         return self.writer is not None and not self.writer.is_closing()
@@ -79,7 +80,7 @@ class EvenniaTelnetSession:
             out = await self._read_quiescent(0.8)
 
             if self._looks_logged_in(out):
-                return TelnetResult(text=out, created_account=False)
+                return TelnetResult(text="", created_account=False)
 
             if not auto_create:
                 return TelnetResult(text=out, created_account=False)
