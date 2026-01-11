@@ -199,6 +199,9 @@ class GatewayBot(discord.Client):
         self.nick_cmd_template = os.getenv("NICK_COMMAND_TEMPLATE", "").strip()
 
     async def on_ready(self):
+        if not getattr(self, "_reaper_started", False):
+            self._reaper_started = True
+            self.loop.create_task(self._reap_idle_sessions())
         print(f"GatewayBot logged in as {self.user} (dm_only={self.config.dm_only})")
 
     async def on_message(self, message: discord.Message):
@@ -314,7 +317,7 @@ Notes:
         text = fix_telnet_text(text)
 
         # If the output contains ANSI, prefer Discord's ```ansi``` rendering.
-        if "\x1b[" in text:
+        if "\x1b" in text:
             fence_overhead = len("```ansi\n") + len("\n```")
             inner_size = max(200, self.config.output_chunk_size - fence_overhead)
             raw_chunks = chunk_ansi_text(text, inner_size, self.config.output_max_chunks)
@@ -333,3 +336,15 @@ Notes:
             else:
                 await message.channel.send(c)
                 await asyncio.sleep(0.25)
+
+    async def _reap_idle_sessions(self):
+        while True:
+            await asyncio.sleep(60)
+            for discord_id, sess in list(self.sessions.items()):
+                try:
+                    if sess and sess.is_connected() and sess.is_idle():
+                        await sess.close()
+                        self.sessions.pop(discord_id, None)
+                except Exception:
+                    pass
+

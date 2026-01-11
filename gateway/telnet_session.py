@@ -39,6 +39,9 @@ class EvenniaTelnetSession:
     def is_connected(self) -> bool:
         return self.writer is not None and not self.writer.is_closing()
 
+    def is_idle(self) -> bool:
+        return (time.time() - self._last_io) > self.idle_timeout_s
+
     async def close(self):
         if self.writer and not self.writer.is_closing():
             self.writer.close()
