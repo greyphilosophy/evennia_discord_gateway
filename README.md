@@ -1,138 +1,219 @@
 # evennia-discord-gateway
 
-A **Discord-only access gateway** for **Evennia** MUDs.
+A **Discord-first gateway** for **Evennia** MUDs.
 
-- Players talk to a Discord bot.
-- The bot maintains a **local telnet session** to Evennia (one per Discord user).
-- Each Discord user is mapped **1:1** to a single Evennia account.
-- No slash commands required.
-- Output is automatically **chunked** to Discord message limits.
+Players interact by **DMing a Discord bot**. The bot maintains a **local telnet session** to your Evennia server (one per Discord user) and forwards messages as in-game commands. Output is returned to Discord, automatically chunked to fit message limits.
 
-This project is designed for the pattern you described:
-- The MUD itself stays off the public internet (no port-forwarding required).
-- Discord becomes the public access layer.
+This project is designed for the “no port-forwarding” pattern:
+- Your Evennia telnet port binds to **localhost only**
+- Discord becomes the public access layer
 
-> Why telnet?
-> Because it lets this gateway work with *any* Evennia game without modifying the game.
-> Just bind telnet to localhost and run the gateway on the same machine.
+---
+
+## Features
+
+- **Discord DM interface** (default: DM-only)
+- **No slash commands required**
+- **1:1 mapping**: each Discord account maps to a single Evennia account
+- **Auto-create / auto-connect** using Evennia’s `create` + `connect`
+- **ANSI output rendered in Discord** via fenced ```ansi code blocks
+- **Robust text decoding** to avoid mojibake (smart punctuation / “���” issues)
+- **Output chunking** (splits long output into multiple Discord messages)
+
+---
+
+## Requirements
+
+- Python 3.10+ (tested on 3.12)
+- An Evennia server reachable via telnet from the machine running the gateway
+- A Discord bot token with **Message Content Intent** enabled
 
 ---
 
 ## Quickstart
 
-### 1) Run Evennia telnet on localhost only
+### 1) Bind Evennia telnet to localhost only
 
-In your Evennia `server/conf/settings.py` (or `server/conf/settings.py` override), bind telnet to loopback:
+In your Evennia `server/conf/settings.py` (or your settings override), bind telnet to loopback:
 
 ```python
-# Only accept telnet from local machine
 TELNET_INTERFACES = [("127.0.0.1", 4000)]
+````
 
-# Optional: disable public webclient if you don't need it
-# WEBSOCKET_CLIENT_ENABLED = False
-# WEBCLIENT_ENABLED = False
-```
+This prevents remote telnet connections; only local processes can connect.
 
-Now only processes on the same machine can connect.
+> You can also disable web client/websocket if you want, but it’s optional.
 
-### 2) Create a Discord bot
+---
 
-Create a bot at the Discord Developer Portal, invite it to your server, and enable:
-- **MESSAGE CONTENT INTENT** (privileged intent)
+### 2) Create and invite the Discord bot
 
-*(DM-only mode is the default and recommended.)*
+1. Go to the Discord Developer Portal → Applications → New Application
+2. Add a **Bot**
+3. Enable **Privileged Gateway Intent**:
 
-### 3) Configure and run the gateway
+   * ✅ Message Content Intent
+4. Invite the bot to your server using OAuth2 URL Generator:
+
+   * Scope: `bot`
+   * Permissions: View Channels / Send Messages (minimum)
+5. Copy the bot token
+
+> Note: “Installing the app” is not the same as inviting the bot user. Make sure you invite with scope `bot`.
+
+---
+
+### 3) Install and run the gateway
+
+From the repo directory:
 
 ```bash
-cd evennia-discord-gateway
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install .
+```
 
+Set required environment variables:
+
+```bash
 export DISCORD_TOKEN='...'
-export GATEWAY_SECRET='a-long-random-string'
+export GATEWAY_SECRET='...'
+```
 
-# Where your Evennia telnet listens (localhost by default)
+Optional (defaults shown):
+
+```bash
 export EVENNIA_HOST='127.0.0.1'
 export EVENNIA_PORT='4000'
+export DM_ONLY='true'
+export OUTPUT_CHUNK_SIZE='1800'
+export OUTPUT_MAX_CHUNKS='8'
+```
 
-# Optional: set an in-game "nickname" command to run on first connect
-# If Evennia already provides @icname or similar, use it. Otherwise, add your own command.
-# export NICK_COMMAND_TEMPLATE='@icname {name}'
+Run:
 
-# Optional: allow play in guild channels (public). Default is DM-only.
-# export DM_ONLY='false'
-
+```bash
 eddg
 ```
 
 ---
 
+## Using a `.env` file (recommended)
+
+You can store config in a `.env` file (do not commit it). Example:
+
+```env
+DISCORD_TOKEN=your_token_here
+GATEWAY_SECRET=your_long_random_secret_here
+EVENNIA_HOST=127.0.0.1
+EVENNIA_PORT=4000
+DM_ONLY=true
+OUTPUT_CHUNK_SIZE=1800
+OUTPUT_MAX_CHUNKS=8
+```
+
+Load it into your shell before starting:
+
+```bash
+set -a
+source .env
+set +a
+eddg
+```
+
+> Keep `GATEWAY_SECRET` stable. Changing it will prevent existing accounts from auto-connecting.
+
+---
+
 ## How account mapping works
 
-- The gateway uses Discord's stable `author.id` as the identity.
-- The Evennia account name becomes:
+* The gateway uses Discord’s stable `author.id` as the identity key.
+* The Evennia account name becomes:
 
 ```
 {ACCOUNT_PREFIX}{discord_user_id}
 ```
 
 Defaults:
-- `ACCOUNT_PREFIX = "discord_"`
+
+* `ACCOUNT_PREFIX = "discord_"`
 
 Passwords:
-- The gateway derives a stable per-user password using `GATEWAY_SECRET`.
-- Users never need to know it (since they only connect through Discord).
+
+* A stable per-user password is derived from `GATEWAY_SECRET` + Discord user id.
+* Users never need to know the password (they connect through Discord).
 
 This ensures:
-- Each Discord account maps to exactly one Evennia account.
-- The gateway can reconnect users without storing plaintext passwords.
+
+* Each Discord account maps to exactly one Evennia account
+* The gateway can reconnect users without storing plaintext passwords
 
 ---
 
-## Player commands
+## How to play
 
-In a DM to the bot (or in guild channels if `DM_ONLY=false`):
+In a **DM** to the bot (or in guild channels if enabled), send normal Evennia commands:
 
-- `help` — show local help
-- `whoami` — show your mapped Evennia account
-- `logout` — close your telnet session
-- Anything else — forwarded as a normal in-game command
+* `look` (or `l`)
+* `help`
+* `say hello`
+* etc.
 
----
-
-## Output chunking
-
-The bot splits long output into multiple Discord messages.
-
-Env vars:
-- `OUTPUT_CHUNK_SIZE` (default `1800`)
-- `OUTPUT_MAX_CHUNKS` (default `8`)
-
-If output exceeds the max, it will append a truncation notice.
+The gateway forwards the message as the player’s in-game command and relays output back to Discord.
 
 ---
 
-## Public play vs private play
+## DM-only vs guild channel play
 
-- In **DM-only mode** (`DM_ONLY=true`), game history stays in the user's DMs.
-- If you allow guild channel play (`DM_ONLY=false`), everything in that channel is public.
+* **DM-only (default)**: `DM_ONLY=true`
+  The bot only responds in DMs. This is the recommended mode.
+
+* **Guild/public**: `DM_ONLY=false`
+  The bot will respond in server channels too. **History in those channels is public.**
 
 ---
 
-## Limitations (v1)
+## Output formatting
 
-- This gateway does not (yet) attempt to interpret prompts, paging, or ANSI color.
-- It relies on Evennia's default unlogged-in commands:
-  - `create <account> <password>`
-  - `connect <account> <password>`
+* Evennia often sends ANSI color/style codes over telnet.
+* Discord can render ANSI only inside a fenced code block tagged `ansi`.
+* The gateway wraps ANSI output in ```ansi blocks and chunks output safely.
 
-If your game customized those, you may need to adapt the login commands.
+---
+
+## Limitations / assumptions (v1)
+
+* Uses Evennia’s default unauthenticated commands:
+
+  * `create <account> <password>`
+  * `connect <account> <password>`
+    If your game changes these, update the gateway login flow accordingly.
+* The gateway is a telnet client; it ignores many telnet option negotiations (GMCP/MCCP/etc.). This is normal for v1.
+
+---
+
+## Troubleshooting
+
+**Bot is online but doesn’t respond**
+
+* Ensure Message Content Intent is enabled in the Developer Portal
+* Confirm you are DMing the bot (DM-only is default)
+* If testing in a server, set `DM_ONLY=false`
+
+**Bot doesn’t show up in my server**
+
+* Make sure you invited with OAuth2 scope `bot` (not just “installed the app”)
+
+**Connection errors to Evennia**
+
+* Confirm Evennia is running
+* Confirm `TELNET_INTERFACES` includes `("127.0.0.1", 4000)`
+* Confirm `EVENNIA_HOST`/`EVENNIA_PORT` match your Evennia telnet listener
 
 ---
 
 ## License
 
 MIT
+
