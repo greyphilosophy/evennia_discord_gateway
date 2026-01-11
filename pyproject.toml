@@ -13,3 +13,7 @@ dependencies = [
 
 [project.scripts]
 eddg = "gateway.main:main"
+
+[tool.setuptools.packages.find]
+include = ["gateway*"]
+exclude = ["data*"]

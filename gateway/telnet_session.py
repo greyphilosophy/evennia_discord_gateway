@@ -49,9 +49,11 @@ class EvenniaTelnetSession:
         if self.is_connected():
             return
         self.reader, self.writer = await telnetlib3.open_connection(
-            self.host,
-            self.port,
+            host=self.host,
+            port=self.port,
             shell=None,
+            encoding="utf-8",
+            encoding_errors="surrogateescape",
             connect_minwait=0.1,
             connect_maxwait=1.0,
         )
