@@ -13,6 +13,7 @@ This project is designed for the “no port-forwarding” pattern:
 ## Features
 
 - **Discord DM interface** (default: DM-only)
+- **Live in-room updates** (player speech, arrivals, events)
 - **No slash commands required**
 - **1:1 mapping**: each Discord account maps to a single Evennia account
 - **Auto-create / auto-connect** using Evennia’s `create` + `connect`
@@ -128,26 +129,24 @@ eddg
 
 ## How account mapping works
 
-* The gateway uses Discord’s stable `author.id` as the identity key.
-* The Evennia account name becomes:
+* Each Discord user maps to **exactly one Evennia account**.
+* The account name is derived from the user’s Discord display name plus a short suffix.
+
+Example:
 
 ```
-{ACCOUNT_PREFIX}{discord_user_id}
+greyphilosophy-9900
 ```
 
-Defaults:
-
-* `ACCOUNT_PREFIX = "discord_"`
+Details:
+* The base name comes from your Discord display name (sanitized).
+* A short numeric suffix ensures stability and avoids collisions.
+* Names are capped to safe Evennia lengths.
 
 Passwords:
-
-* A stable per-user password is derived from `GATEWAY_SECRET` + Discord user id.
-* Users never need to know the password (they connect through Discord).
-
-This ensures:
-
-* Each Discord account maps to exactly one Evennia account
-* The gateway can reconnect users without storing plaintext passwords
+* A **stable per-user password** is derived from `GATEWAY_SECRET` + Discord user id.
+* Passwords are never shown to the user.
+* Users authenticate exclusively via Discord.
 
 ---
 
