@@ -1,3 +1,4 @@
+# gateway/telnet_session.py
 from __future__ import annotations
 
 import asyncio
@@ -36,6 +37,12 @@ class EvenniaTelnetSession:
         self._lock = asyncio.Lock()
         self._last_io = time.time()
         self.did_rename = False
+        self._reader_task: Optional[asyncio.Task] = None
+        self._buf = ""                       # accumulated incoming text
+        self._buf_event = asyncio.Event()    # signals new data arrived
+        self._command_mode = False           # True while run_command is collecting output
+        self.on_ambient_text = None  # type: Optional[callable]
+        self.authenticated = False
 
     def is_connected(self) -> bool:
         return self.writer is not None and not self.writer.is_closing()
@@ -43,15 +50,48 @@ class EvenniaTelnetSession:
     def is_idle(self) -> bool:
         return (time.time() - self._last_io) > self.idle_timeout_s
 
+    async def set_ambient_handler(self, handler):
+        self.on_ambient_text = handler
+
+        # If we already have buffered text and we're not in command mode,
+        # flush it immediately so it doesn't get eaten by the next command read.
+        if handler and self._buf and not self._command_mode:
+            text = self._buf
+            self._buf = ""
+            self._buf_event.clear()
+            await handler(text)
+
+
     async def close(self):
+        # Stop background reader
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._reader_task = None
+
+        # Close writer/socket
         if self.writer and not self.writer.is_closing():
             self.writer.close()
+
         self.reader = None
         self.writer = None
+
+        # Clear buffers
+        self._buf = ""
+        self._buf_event.clear()
+        self._command_mode = False
+
+        self.authenticated = False
 
     async def connect(self):
         if self.is_connected():
             return
+
         self.reader, self.writer = await telnetlib3.open_connection(
             host=self.host,
             port=self.port,
@@ -61,8 +101,15 @@ class EvenniaTelnetSession:
             connect_minwait=0.1,
             connect_maxwait=1.0,
         )
-        # Drain banner
+        self.authenticated = False
+
+        # Start background reader FIRST so _read_quiescent can drain from buffer reliably.
+        if not self._reader_task or self._reader_task.done():
+            self._reader_task = asyncio.create_task(self._reader_loop())
+
+        # Drain banner / initial burst
         await self._read_quiescent(0.6)
+
 
     async def ensure_logged_in(
         self,
@@ -73,6 +120,20 @@ class EvenniaTelnetSession:
         """Ensure we're connected and authenticated."""
         async with self._lock:
             await self.connect()
+            if self.authenticated:
+                return TelnetResult(text="", created_account=False)
+
+            # Non-destructive peek: don't drain _buf (or you'll eat ambient output)
+            try:
+                await asyncio.wait_for(self._buf_event.wait(), timeout=0.05)
+            except asyncio.TimeoutError:
+                pass
+
+            probe = self._buf  # <-- do NOT clear
+            if self._looks_logged_in(probe):
+                self.authenticated = True
+                return TelnetResult(text="", created_account=False)
+
             created = False
 
             # Try connect first
@@ -80,6 +141,7 @@ class EvenniaTelnetSession:
             out = await self._read_quiescent(0.8)
 
             if self._looks_logged_in(out):
+                self.authenticated = True
                 return TelnetResult(text="", created_account=False)
 
             if not auto_create:
@@ -93,18 +155,50 @@ class EvenniaTelnetSession:
             await self._send_line(f"connect {account} {password}")
             out3 = await self._read_quiescent(0.8)
 
+            if self._looks_logged_in(out3):
+                self.authenticated = True
+                return TelnetResult(text="", created_account=created)
+
             return TelnetResult(text=(out + out2 + out3), created_account=created)
 
     async def run_command(self, cmd: str) -> str:
-        """Run a single command and return resulting text."""
         cmd = (cmd or "").rstrip("\n")
         if not cmd:
             return ""
         async with self._lock:
             if not self.is_connected():
                 await self.connect()
-            await self._send_line(cmd)
-            return await self._read_quiescent(0.6)
+
+            self._command_mode = True
+            try:
+                await self._send_line(cmd)
+                return await self._read_quiescent(0.6)
+            finally:
+                self._command_mode = False
+
+    async def _reader_loop(self):
+        assert self.reader is not None
+        try:
+            while self.is_connected():
+                chunk = await self.reader.read(4096)
+                if not chunk:
+                    await asyncio.sleep(0.05)
+                    continue
+                self._last_io = time.time()
+                self._buf += chunk
+                if (not self._command_mode) and self.on_ambient_text:
+                    # Drain buffer immediately to avoid duplicate sending
+                    text = self._buf
+                    self._buf = ""
+                    self._buf_event.clear()
+                    await self.on_ambient_text(text)
+
+                self._buf_event.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # connection likely dropped; let connect()/run_command handle reconnect
+            pass
 
     # -------- internals --------
 
@@ -115,26 +209,30 @@ class EvenniaTelnetSession:
         self._last_io = time.time()
 
     async def _read_quiescent(self, total_wait: float) -> str:
-        """
-        Read until the stream is quiet for a short period, capped by total_wait.
-        This is intentionally fuzzy because telnet output is bursty.
-        """
-        assert self.reader is not None
         out = []
         deadline = time.time() + total_wait
+
         while time.time() < deadline:
+            # wait briefly for new data
+            timeout = min(0.12, max(0.0, deadline - time.time()))
             try:
-                chunk = await asyncio.wait_for(self.reader.read(4096), timeout=0.12)
+                await asyncio.wait_for(self._buf_event.wait(), timeout=timeout)
             except asyncio.TimeoutError:
-                chunk = ""
-            if chunk:
-                out.append(chunk)
+                pass
+
+            # consume buffer if any
+            if self._buf:
+                out.append(self._buf)
+                self._buf = ""
+                self._buf_event.clear()
                 self._last_io = time.time()
-                # extend slightly when new data arrives
                 deadline = max(deadline, time.time() + 0.18)
             else:
+                self._buf_event.clear()
                 await asyncio.sleep(0.03)
+
         return "".join(out)
+
 
     @staticmethod
     def _looks_logged_in(text: str) -> bool:
@@ -153,6 +251,10 @@ class EvenniaTelnetSession:
         low = (text or "").lower()
         return "created" in low and "account" in low
 
+    @staticmethod
+    def _looks_like_already_in_game(text: str) -> bool:
+        low = (text or "").lower()
+        return ("command 'connect" in low or "command 'create" in low) and "not available" in low
 
 def stable_password(secret: str, discord_user_id: str) -> str:
     """Derive a stable per-user password from a gateway secret."""

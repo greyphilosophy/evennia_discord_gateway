@@ -1,3 +1,4 @@
+# gateway/bot.py
 from __future__ import annotations
 
 import asyncio
@@ -102,6 +103,10 @@ def _sanitize_ic_name(name: str) -> str:
     name = re.sub(r"[^A-Za-z0-9 '\-]", "", name)
     return name[:30].strip() or "Adventurer"
 
+def _account_name_from_discord(disp: str, discord_id: str) -> str:
+    base = _sanitize_ic_name(disp)
+    suffix = discord_id[-4:]
+    return f"{base}-{suffix}"[:30]
 
 def chunk_text(text: str, size: int, max_chunks: int) -> list[str]:
     text = text or ""
@@ -176,6 +181,19 @@ def fix_telnet_text(s: str) -> str:
     })
     return best
 
+_LOGIN_LINE_RE = re.compile(r"^(?:Command\s+)?'(?:create|connect)\s+[^']+'\s+is\s+not\s+available\..*$", re.IGNORECASE)
+
+def scrub_credentials(text: str) -> str:
+    if not text:
+        return text
+    lines = []
+    for line in text.splitlines():
+        # Drop lines that echo create/connect commands (these can include passwords)
+        if _LOGIN_LINE_RE.match(line.strip()):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
 class GatewayBot(discord.Client):
     def __init__(self, config: Config, db: Database):
         intents = discord.Intents.default()
@@ -248,12 +266,6 @@ Notes:
 
         discord_id = str(message.author.id)
         disp = _display_name(message.author, message)
-        def _account_name_from_discord(disp: str, discord_id: str) -> str:
-            base = _sanitize_ic_name(disp)              # already limited to 30
-            suffix = discord_id[-4:]                    # stable, short, unique-ish
-            name = f"{base}-{suffix}"
-            return name[:30]                            # keep within Evennia-ish limits
-
         acct = _account_name_from_discord(disp, discord_id)
         pwd = stable_password(self.gateway_secret, discord_id)
         
@@ -279,6 +291,18 @@ Notes:
                 idle_timeout_s=self.config.idle_timeout_s,
             )
             self.sessions[discord_id] = sess
+
+        # Always (re)bind ambient forwarding to the current channel.
+        channel = message.channel
+
+        async def _ambient_sender(text: str, _ch=channel):
+            await self._send_to_channel(_ch, text)
+
+        # Prefer the safer helper if you added it (flushes any queued buffer).
+        if hasattr(sess, "set_ambient_handler"):
+            await sess.set_ambient_handler(_ambient_sender)
+        else:
+            sess.on_ambient_text = _ambient_sender
 
         try:
             # Login / auto-create
@@ -327,6 +351,7 @@ Notes:
     async def _send_chunks(self, message: discord.Message, text: str):
         text = text or ""
         text = fix_telnet_text(text)
+        text = scrub_credentials(text)
 
         # If the output contains ANSI, prefer Discord's ```ansi``` rendering.
         if "\x1b" in text:
@@ -348,6 +373,23 @@ Notes:
             else:
                 await message.channel.send(c)
                 await asyncio.sleep(0.25)
+
+    async def _send_to_channel(self, channel: discord.abc.Messageable, text: str):
+        text = text or ""
+        text = fix_telnet_text(text)
+        text = scrub_credentials(text)
+
+        if "\x1b" in text:
+            fence_overhead = len("```ansi\n") + len("\n```")
+            inner_size = max(200, self.config.output_chunk_size - fence_overhead)
+            raw_chunks = chunk_ansi_text(text, inner_size, self.config.output_max_chunks)
+            chunks = [wrap_discord_ansi_block(c) for c in raw_chunks]
+        else:
+            chunks = chunk_text(text, self.config.output_chunk_size, self.config.output_max_chunks)
+
+        for c in chunks:
+            await channel.send(c)
+            await asyncio.sleep(0.25)
 
     async def _reap_idle_sessions(self):
         while True:
