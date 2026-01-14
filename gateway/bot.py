@@ -248,22 +248,6 @@ class GatewayBot(discord.Client):
         if not content:
             return
 
-        # Local help
-        if content.lower() in {"help", "?", "commands"}:
-            await self._send_chunks(
-                message,
-                """Commands:
-- logout: end your current session
-- whoami: show your mapped Evennia account
-- Anything else is sent to the MUD as a command.
-
-Notes:
-- Your Discord account is mapped 1:1 to a single Evennia account.
-- Output may be split into multiple messages.
-""",
-            )
-            return
-
         discord_id = str(message.author.id)
         disp = _display_name(message.author, message)
         acct = _account_name_from_discord(disp, discord_id)
@@ -276,10 +260,6 @@ Notes:
         # Session control
         if content.lower() == "logout":
             await self._logout(discord_id, message)
-            return
-
-        if content.lower() == "whoami":
-            await self._send_chunks(message, f"Evennia account: `{acct}`")
             return
 
         # Ensure telnet session
@@ -317,17 +297,6 @@ Notes:
 
             # Send command
             out = await sess.run_command(content)
-
-            # Set the user's nickname once per session
-            # if (
-            #     self.config.auto_set_nickname
-            #     and self.nick_cmd_template
-            #     and not sess.did_rename
-            # ):
-            #     ic = _sanitize_ic_name(disp)
-            #     nick_cmd = self.nick_cmd_template.format(name=ic)
-            #     await sess.run_command(nick_cmd)
-            #     sess.did_rename = True
 
             # If Evennia echoed nothing, don't spam
             if out.strip():
