@@ -161,9 +161,6 @@ In a **DM** to the bot (or in guild channels if enabled), send normal Evennia co
 
 The gateway forwards the message as the player’s in-game command and relays output back to Discord.
 
-There are also special commands that are intercepted and handled directly:
-* `whoami` — show your mapped Evennia account
-
 ---
 
 ## DM-only vs guild channel play
