@@ -17,3 +17,9 @@ eddg = "gateway.main:main"
 [tool.setuptools.packages.find]
 include = ["gateway*"]
 exclude = ["data*"]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7",
+  "python-dotenv>=0.20",
+]
