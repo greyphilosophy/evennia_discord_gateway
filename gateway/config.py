@@ -58,6 +58,11 @@ class Config:
     # If true, the bot will warn users that gameplay in public guild channels is public.
     warn_public_play: bool
 
+    # Image delivery
+    # Path to the MUD's `generated/` directory for resolving image URLs to local files.
+    # If set, the gateway will send matching images as Discord attachments.
+    generated_images_dir: str | None
+
 
 def load_config() -> Config:
     token = _env("DISCORD_TOKEN")
@@ -76,4 +81,5 @@ def load_config() -> Config:
         account_prefix=_env("ACCOUNT_PREFIX", "discord_") or "discord_",
         auto_set_nickname=_env_bool("AUTO_SET_NICKNAME", True),
         warn_public_play=_env_bool("WARN_PUBLIC_PLAY", True),
+        generated_images_dir=_env("GENERATED_IMAGES_DIR"),
     )

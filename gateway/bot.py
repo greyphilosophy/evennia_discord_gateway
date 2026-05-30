@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Dict
 
 import discord
 
 from .config import Config
 from .db import Database
+from .image_helpers import extract_image_urls, resolve_local_image, strip_image_references
 from .telnet_session import EvenniaTelnetSession, stable_password
+
+logger = logging.getLogger(__name__)
 
 # --- ANSI -> Discord formatting ---
 # Evennia's telnet output often includes ANSI color/style escape sequences.
@@ -322,6 +327,13 @@ class GatewayBot(discord.Client):
         text = fix_telnet_text(text)
         text = scrub_credentials(text)
 
+        # Extract and deliver any image URLs
+        text = await self._try_deliver_images(message, text)
+
+        if not text.strip():
+            # Text was only image references; nothing left to send as text
+            return
+
         # If the output contains ANSI, prefer Discord's ```ansi``` rendering.
         if "\x1b" in text:
             fence_overhead = len("```ansi\n") + len("\n```")
@@ -348,6 +360,12 @@ class GatewayBot(discord.Client):
         text = fix_telnet_text(text)
         text = scrub_credentials(text)
 
+        # Extract and deliver any image URLs
+        text = await self._try_deliver_images_to_channel(channel, text)
+
+        if not text.strip():
+            return
+
         if "\x1b" in text:
             fence_overhead = len("```ansi\n") + len("\n```")
             inner_size = max(200, self.config.output_chunk_size - fence_overhead)
@@ -359,6 +377,48 @@ class GatewayBot(discord.Client):
         for c in chunks:
             await channel.send(c)
             await asyncio.sleep(0.25)
+
+    async def _try_deliver_images(self, message: discord.Message, text: str) -> str:
+        """Extract image URLs from text, send as Discord attachments, and strip from text."""
+        urls = extract_image_urls(text)
+        if not urls:
+            return text
+
+        if not self.config.generated_images_dir:
+            # No local images directory configured; just strip the references
+            return strip_image_references(text)
+
+        # Try to send each image as a Discord attachment
+        for url in urls:
+            img_path = resolve_local_image(url, self.config.generated_images_dir)
+            if img_path:
+                try:
+                    await message.reply(file=discord.File(str(img_path), filename=img_path.name))
+                except Exception as e:
+                    logger.warning(f"Failed to send image {img_path.name} to Discord: {e}")
+
+        # Strip image references from text
+        return strip_image_references(text)
+
+    async def _try_deliver_images_to_channel(self, channel: discord.abc.Messageable, text: str) -> str:
+        """Extract image URLs from text, send as Discord attachments to channel, and strip."""
+        urls = extract_image_urls(text)
+        if not urls:
+            return text
+
+        if not self.config.generated_images_dir:
+            return strip_image_references(text)
+
+        for url in urls:
+            img_path = resolve_local_image(url, self.config.generated_images_dir)
+            if img_path:
+                try:
+                    await channel.send(file=discord.File(str(img_path), filename=img_path.name))
+                    await asyncio.sleep(0.25)
+                except Exception as e:
+                    logger.warning(f"Failed to send image {img_path.name} to channel: {e}")
+
+        return strip_image_references(text)
 
     async def _reap_idle_sessions(self):
         while True:
