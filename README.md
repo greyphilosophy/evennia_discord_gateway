@@ -90,6 +90,7 @@ export EVENNIA_PORT='4000'
 export DM_ONLY='true'
 export OUTPUT_CHUNK_SIZE='1800'
 export OUTPUT_MAX_CHUNKS='8'
+export GENERATED_IMAGES_DIR='/path/to/mud/generated'  # see Image delivery section
 ```
 
 Run:
@@ -189,6 +190,29 @@ The gateway forwards the message as the player’s in-game command and relays ou
   * `connect <account> <password>`
     If your game changes these, update the gateway login flow accordingly.
 * The gateway is a telnet client; it ignores many telnet option negotiations (GMCP/MCCP/etc.). This is normal for v1.
+
+---
+
+## Image delivery
+
+If your Evennia game generates images (e.g. via the **evennia-ai-image-generator** package), the gateway can send them as **Discord image attachments** instead of plain-text URLs.
+
+**Prerequisites:**
+
+1. Your MUD stores generated images in a local directory (e.g. `generated/`).
+2. Set the `GENERATED_IMAGES_DIR` environment variable:
+
+```bash
+export GENERATED_IMAGES_DIR='/path/to/mud/generated'
+```
+
+**How it works:**
+
+1. When you `look` at a room, the Evennia output includes an image URL (e.g. `https://game.test/media/generated/room_abc.png`).
+2. The gateway extracts the URL, finds the matching local file, and sends it as a `discord.File` attachment.
+3. The plain-text URL is stripped from the message.
+
+If `GENERATED_IMAGES_DIR` is set but the file doesn't exist, the image is silently skipped (no crash).
 
 ---
 
