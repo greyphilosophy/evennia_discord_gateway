@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Evennia outputs: |yImage: https://game.test/media/generated/file.png|n
 # Also handles plain text URLs.
 _IMAGE_URL_RE = re.compile(
-    r"(?i)image:\s*(https?://[^|\s]+\.(?:png|jpg|jpeg|webp|gif))"
+    r"(?i)image:\s*(https?://[^|\x1b]*?\.(?:png|jpg|jpeg|webp|gif))"
 )
 
 # Matches "Image: generating..." placeholder
