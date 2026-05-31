@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -64,10 +65,22 @@ class Config:
     generated_images_dir: str | None
 
 
+def _find_generated_images_dir() -> str | None:
+    """Scan common locations for the MUD's generated/ image directory."""
+    for path in [
+        Path("/home/greyphilosophy/muddev/aicompany_mud/generated"),
+    ]:
+        if path.is_dir() and any(path.glob("*.png")):
+            return str(path)
+    return None
+
+
 def load_config() -> Config:
     token = _env("DISCORD_TOKEN")
     if not token:
         raise RuntimeError("DISCORD_TOKEN is required")
+
+    generated_dir = _env("GENERATED_IMAGES_DIR") or _find_generated_images_dir()
 
     return Config(
         discord_token=token,
@@ -81,5 +94,5 @@ def load_config() -> Config:
         account_prefix=_env("ACCOUNT_PREFIX", "discord_") or "discord_",
         auto_set_nickname=_env_bool("AUTO_SET_NICKNAME", True),
         warn_public_play=_env_bool("WARN_PUBLIC_PLAY", True),
-        generated_images_dir=_env("GENERATED_IMAGES_DIR"),
+        generated_images_dir=generated_dir,
     )
