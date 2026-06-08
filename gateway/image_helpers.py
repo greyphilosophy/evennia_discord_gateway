@@ -6,16 +6,17 @@ and references them via URLs like:
 
 When these URLs appear in telnet output (sent to Discord), we:
 1. Extract the URLs from the text
-2. Resolve them to local files
+2. Resolve them to local files (if generated_images_dir is configured)
 3. Send the images as Discord attachments
-4. Strip the URLs from the text so they don't appear as plain text
+4. Strip only the *successfully delivered* URLs from the text
+   (unsent URLs remain visible as fallback links)
 """
 from __future__ import annotations
 
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,22 +42,22 @@ def extract_image_urls(text: str) -> List[str]:
     if not text:
         return []
     matches = _IMAGE_URL_RE.findall(text)
-    # Filter out "generating..." placeholders
     return [url for url in matches if not _IMAGE_GENERATING_RE.match(url)]
 
 
 def resolve_local_image(
     image_url: str,
-    generated_dir: Path,
+    generated_dir: Optional[str],
 ) -> Optional[Path]:
     """Resolve an image URL to a local file path.
 
     Given a URL like 'https://game.test/media/generated/room_desc_abc123.png',
     maps it to the local file in the generated_images_dir.
 
-    Returns None if the file doesn't exist.
+    Returns None if the file doesn't exist or no directory is configured.
     """
-    # Extract the filename from the URL
+    if not generated_dir:
+        return None
     filename = Path(image_url).name
     if not filename:
         return None
@@ -69,15 +70,31 @@ def resolve_local_image(
     return file_path if file_path.is_file() else None
 
 
-def strip_image_references(text: str) -> str:
-    """Remove image URL references and placeholders from text.
+def strip_image_references(text: str, urls_to_strip: Optional[Iterable[str]] = None) -> str:
+    """Remove image URL references from text.
 
-    Removes lines containing image URLs so they don't appear as plain text
-    when we send them as Discord attachments.
+    If ``urls_to_strip`` is provided, only those specific URLs are removed
+    from the text. This ensures that images which failed to deliver are
+    left visible as fallback links.
+
+    If ``urls_to_strip`` is None or empty, *all* image references are stripped.
     """
     if not text:
         return text
-    # Remove lines that contain image URLs or generating... placeholders
+
+    if urls_to_strip:
+        for url in urls_to_strip:
+            text = text.replace(url, "")
+        # Remove "generating..." placeholder lines
+        lines = text.split("\n")
+        cleaned = []
+        for line in lines:
+            if _IMAGE_GENERATING_RE.search(line):
+                continue
+            cleaned.append(line)
+        return "\n".join(cleaned)
+
+    # Legacy: strip all image references
     lines = text.split("\n")
     cleaned = []
     for line in lines:

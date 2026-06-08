@@ -379,46 +379,56 @@ class GatewayBot(discord.Client):
             await asyncio.sleep(0.25)
 
     async def _try_deliver_images(self, message: discord.Message, text: str) -> str:
-        """Extract image URLs from text, send as Discord attachments, and strip from text."""
+        """Extract image URLs from text, send as Discord attachments.
+
+        Only strips image references for images that were *successfully*
+        sent as attachments. If delivery fails (no local dir, file missing),
+        the original URL stays visible in the text.
+        """
         urls = extract_image_urls(text)
         if not urls:
             return text
 
-        if not self.config.generated_images_dir:
-            # No local images directory configured; just strip the references
-            return strip_image_references(text)
-
-        # Try to send each image as a Discord attachment
+        sent_urls = []
         for url in urls:
             img_path = resolve_local_image(url, self.config.generated_images_dir)
             if img_path:
                 try:
                     await message.reply(file=discord.File(str(img_path), filename=img_path.name))
+                    sent_urls.append(url)
                 except Exception as e:
-                    logger.warning(f"Failed to send image {img_path.name} to Discord: {e}")
+                    logger.warning("Failed to send image %s to Discord: %s", img_path.name, e)
 
-        # Strip image references from text
-        return strip_image_references(text)
+        # Only strip the references that were actually sent as attachments
+        if sent_urls:
+            return strip_image_references(text, sent_urls)
+        return text
 
     async def _try_deliver_images_to_channel(self, channel: discord.abc.Messageable, text: str) -> str:
-        """Extract image URLs from text, send as Discord attachments to channel, and strip."""
+        """Extract image URLs from text, send as Discord channel attachments.
+
+        Only strips image references for images that were *successfully*
+        sent as attachments. If delivery fails, the original URL stays visible.
+        """
         urls = extract_image_urls(text)
         if not urls:
             return text
 
-        if not self.config.generated_images_dir:
-            return strip_image_references(text)
-
+        sent_urls = []
         for url in urls:
             img_path = resolve_local_image(url, self.config.generated_images_dir)
             if img_path:
                 try:
                     await channel.send(file=discord.File(str(img_path), filename=img_path.name))
                     await asyncio.sleep(0.25)
+                    sent_urls.append(url)
                 except Exception as e:
-                    logger.warning(f"Failed to send image {img_path.name} to channel: {e}")
+                    logger.warning("Failed to send image %s to channel: %s", img_path.name, e)
 
-        return strip_image_references(text)
+        # Only strip the references that were actually sent as attachments
+        if sent_urls:
+            return strip_image_references(text, sent_urls)
+        return text
 
     async def _reap_idle_sessions(self):
         while True:
