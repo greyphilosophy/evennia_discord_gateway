@@ -135,31 +135,37 @@ class EvenniaTelnetSession:
                 return TelnetResult(text="", created_account=False)
 
             created = False
+            # Enable command mode to protect _buf from the background reader draining it.
+            # Without this, _reader_loop steals the connect/create response as ambient text
+            # before _read_quiescent can consume it.
+            self._command_mode = True
+            try:
+                # Try connect first
+                await self._send_line(f"connect {account} {password}")
+                out = await self._read_quiescent(0.8)
 
-            # Try connect first
-            await self._send_line(f"connect {account} {password}")
-            out = await self._read_quiescent(0.8)
+                if self._looks_logged_in(out):
+                    self.authenticated = True
+                    return TelnetResult(text="", created_account=False)
 
-            if self._looks_logged_in(out):
-                self.authenticated = True
-                return TelnetResult(text="", created_account=False)
+                if not auto_create:
+                    return TelnetResult(text=out, created_account=False)
 
-            if not auto_create:
-                return TelnetResult(text=out, created_account=False)
+                # Try create then connect
+                await self._send_line(f"create {account} {password}")
+                out2 = await self._read_quiescent(0.9)
+                created = self._looks_like_create_success(out2)
 
-            # Try create then connect
-            await self._send_line(f"create {account} {password}")
-            out2 = await self._read_quiescent(0.9)
-            created = self._looks_like_create_success(out2)
+                await self._send_line(f"connect {account} {password}")
+                out3 = await self._read_quiescent(0.8)
 
-            await self._send_line(f"connect {account} {password}")
-            out3 = await self._read_quiescent(0.8)
+                if self._looks_logged_in(out3):
+                    self.authenticated = True
+                    return TelnetResult(text="", created_account=created)
 
-            if self._looks_logged_in(out3):
-                self.authenticated = True
-                return TelnetResult(text="", created_account=created)
-
-            return TelnetResult(text=(out + out2 + out3), created_account=created)
+                return TelnetResult(text=(out + out2 + out3), created_account=created)
+            finally:
+                self._command_mode = False
 
     async def run_command(self, cmd: str) -> str:
         cmd = (cmd or "").rstrip("\n")
